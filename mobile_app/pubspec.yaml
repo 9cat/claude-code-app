@@ -1,5 +1,5 @@
 name: mobile_app
-description: "A new Flutter project."
+description: "Claude-Code Mobile App - AI-powered development on the go"
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
@@ -31,10 +31,31 @@ dependencies:
   flutter:
     sdk: flutter
 
-
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
+  
+  # Core functionality
+  http: ^1.1.2
+  web_socket_channel: ^2.4.0
+  
+  # SSH connection
+  dartssh2: ^2.9.1
+  
+  # State management
+  provider: ^6.1.1
+  
+  # Local storage
+  hive: ^2.2.3
+  hive_flutter: ^1.1.0
+  path_provider: ^2.1.2
+  
+  # Voice recognition
+  speech_to_text: ^6.6.0
+  
+  # UI components
+  flutter_markdown: ^0.6.19
+  loading_animation_widget: ^1.2.0+4
 
 dev_dependencies:
   flutter_test:
