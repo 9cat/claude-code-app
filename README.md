@@ -13,4 +13,8 @@ Claude-Code mobile app , write code on the go
 11. it is a open source , so allow all the people to contribute the code to let this app more robositc and reliable.
 12. make the idea to product-alpha/beta more efficiency, and also easier to deliever real product team more transparentcy and don't have to explain in a messy way, since all the document is ready in a professional way
 13. please polish this README.md in a professional way, since i am using pretty oval way to express my ideas.
+14. the repo has ready Dockerfile and docker-compose.yml to create a remote claude-code ready container, just need to docker exec -it claude-code bash , and enter claude , and follow the instruction to using the url to login the claude account and we are good to go with the claude-coding. can we make it smoothly on the app for all of these?
+15. so the app suppose to first start will request to enter the ssh ip and port and username and (key file/passowrd) to gain the root permission and auto create the claude-code-docker and then the app will auto interact with this remote docker seemless and then has a chatbox to interact with the claude code remotely.
+
+
     
