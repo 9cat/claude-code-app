@@ -31,19 +31,22 @@ class WebSocketService {
       // Listen to incoming messages
       _channel!.stream.listen(
         (data) {
+          print('📨 WebSocketService: Raw data received: $data');
           try {
             final message = jsonDecode(data) as Map<String, dynamic>;
+            print('🎯 WebSocketService: Parsed JSON: $message');
             _handleIncomingMessage(message);
           } catch (e) {
-            print('Error parsing WebSocket message: $e');
+            print('❌ WebSocketService: Error parsing WebSocket message: $e');
+            print('📄 WebSocketService: Raw data that failed: $data');
           }
         },
         onError: (error) {
-          print('WebSocket error: $error');
+          print('💥 WebSocketService: WebSocket error: $error');
           _handleConnectionError(error);
         },
         onDone: () {
-          print('WebSocket connection closed');
+          print('🔌 WebSocketService: WebSocket connection closed');
           _handleDisconnection();
         },
       );
@@ -108,11 +111,17 @@ class WebSocketService {
   }
 
   void _handleIncomingMessage(Map<String, dynamic> message) {
+    print('🔍 WebSocketService: Raw message received: $message');
+    
     // Add timestamp if not present
     message['receivedAt'] = DateTime.now().toIso8601String();
     
+    print('🔄 WebSocketService: Forwarding message to AppState: $message');
+    
     // Forward to listeners
     _messageController?.add(message);
+    
+    print('✅ WebSocketService: Message forwarded successfully');
   }
 
   void _handleConnectionError(dynamic error) {
@@ -134,14 +143,20 @@ class WebSocketService {
   }
 
   Future<void> sendCommand(String command) async {
+    print('📤 WebSocketService: Sending command: "$command"');
+    
     if (!_isConnected || _channel == null) {
+      print('❌ WebSocketService: Cannot send command - not connected');
       throw Exception('Not connected to server');
     }
 
-    _sendMessage({
+    final message = {
       'type': 'command',
       'command': command,
-    });
+    };
+    
+    print('📋 WebSocketService: Command message: $message');
+    _sendMessage(message);
   }
 
   Future<void> startClaudeSession() async {

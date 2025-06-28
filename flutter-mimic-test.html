@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Flutter WebSocket Mimic Test</title>
+    <style>
+        body { 
+            font-family: 'Courier New', monospace; 
+            margin: 0; 
+            background: #0d1117; 
+            color: #fff; 
+            padding: 20px;
+        }
+        .terminal { 
+            background: #0d1117; 
+            border: 1px solid #30363d; 
+            height: 400px; 
+            overflow-y: auto; 
+            padding: 10px; 
+            margin: 10px 0;
+            border-radius: 6px;
+        }
+        .message { 
+            margin: 2px 0; 
+            padding: 2px 0;
+            line-height: 1.4;
+        }
+        .timestamp { color: #6e7681; font-size: 11px; }
+        .user { color: #58a6ff; }
+        .assistant { color: #7ee787; }
+        .system { color: #f2cc60; }
+        .error { color: #f85149; }
+        
+        .input-area { 
+            background: #161b22; 
+            padding: 15px; 
+            border-top: 1px solid #30363d; 
+            border-radius: 0 0 6px 6px;
+        }
+        .input-field { 
+            background: #0d1117; 
+            border: 1px solid #30363d; 
+            color: #fff; 
+            padding: 8px 12px; 
+            width: 70%; 
+            font-family: 'Courier New', monospace;
+            border-radius: 4px;
+        }
+        .send-btn { 
+            background: #238636; 
+            color: #fff; 
+            border: none; 
+            padding: 8px 16px; 
+            margin-left: 10px; 
+            border-radius: 4px; 
+            cursor: pointer;
+            font-family: 'Courier New', monospace;
+        }
+        .send-btn:hover { background: #2ea043; }
+        .send-btn:disabled { background: #21262d; color: #6e7681; cursor: not-allowed; }
+        
+        .status { 
+            background: #161b22; 
+            padding: 10px; 
+            border: 1px solid #30363d; 
+            border-radius: 6px 6px 0 0; 
+            margin: 10px 0 0 0;
+        }
+        .status.connected { border-color: #238636; }
+        .status.error { border-color: #da3633; }
+        
+        .controls { margin: 10px 0; }
+        .controls button { 
+            background: #21262d; 
+            color: #fff; 
+            border: 1px solid #30363d; 
+            padding: 6px 12px; 
+            margin-right: 10px; 
+            border-radius: 4px; 
+            cursor: pointer;
+        }
+        .controls button:hover { background: #30363d; }
+    </style>
+</head>
+<body>
+    <h1>🔍 Flutter WebSocket Behavior Test</h1>
+    <p>This mimics the exact Flutter WebSocket implementation to debug the issue.</p>
+    
+    <div class="controls">
+        <button onclick="connect()">Connect</button>
+        <button onclick="authenticate()">Authenticate</button>
+        <button onclick="clearMessages()">Clear</button>
+    </div>
+    
+    <div class="status" id="status">
+        Status: <span id="statusText">Disconnected</span>
+    </div>
+    
+    <div class="terminal" id="terminal"></div>
+    
+    <div class="input-area">
+        <input type="text" class="input-field" id="messageInput" placeholder="➤ Enter your command..." disabled>
+        <button class="send-btn" id="sendBtn" onclick="sendMessage()" disabled>Send</button>
+    </div>
+
+    <script>
+        let ws;
+        let isConnected = false;
+        let isAuthenticated = false;
+        const terminal = document.getElementById('terminal');
+        const statusEl = document.getElementById('status');
+        const statusText = document.getElementById('statusText');
+        const messageInput = document.getElementById('messageInput');
+        const sendBtn = document.getElementById('sendBtn');
+
+        function updateStatus(text, connected = false, error = false) {
+            statusText.textContent = text;
+            statusEl.className = 'status' + (connected ? ' connected' : '') + (error ? ' error' : '');
+            isConnected = connected;
+            messageInput.disabled = !connected || !isAuthenticated;
+            sendBtn.disabled = !connected || !isAuthenticated;
+        }
+
+        function addMessage(content, type = 'system') {
+            const timestamp = new Date().toLocaleTimeString();
+            const messageEl = document.createElement('div');
+            messageEl.className = 'message';
+            
+            let prefix = '';
+            switch(type) {
+                case 'user': prefix = '➤ '; break;
+                case 'system': prefix = '[SYSTEM] '; break;
+                case 'error': prefix = '[ERROR] '; break;
+                case 'assistant': prefix = ''; break;
+            }
+            
+            messageEl.innerHTML = `<span class="timestamp">${timestamp}</span> <span class="${type}">${prefix}${content}</span>`;
+            terminal.appendChild(messageEl);
+            terminal.scrollTop = terminal.scrollHeight;
+            
+            // Also log to console for debugging
+            console.log(`[${timestamp}] ${type.toUpperCase()}: ${content}`);
+        }
+
+        function handleWebSocketMessage(message) {
+            console.log('📨 Received WebSocket message:', message);
+            
+            const type = message.type;
+            const content = message.message || message.data || '';
+            
+            console.log(`🔍 Message type: ${type}, content: "${content}"`);
+            
+            let messageType;
+            switch (type) {
+                case 'claude-output':
+                    messageType = 'assistant';
+                    break;
+                case 'user-input':
+                    messageType = 'user';
+                    break;
+                case 'output':
+                    messageType = 'system';
+                    break;
+                case 'system':
+                case 'auth-success':
+                case 'claude-started':
+                case 'command-complete':
+                case 'claude-session-ended':
+                    messageType = 'system';
+                    break;
+                case 'error':
+                    messageType = 'error';
+                    break;
+                default:
+                    messageType = 'system';
+            }
+
+            // Don't add empty messages (but log them)
+            if (content.toString().trim() === '') {
+                console.log(`⚠️ Skipping empty message of type: ${type}`);
+                return;
+            }
+
+            console.log(`✅ Adding message to UI: type=${messageType}, content="${content}"`);
+            addMessage(content, messageType);
+            
+            // Handle auth success
+            if (type === 'auth-success') {
+                isAuthenticated = true;
+                updateStatus('Connected & Authenticated', true);
+            }
+        }
+
+        function connect() {
+            if (ws) ws.close();
+            
+            addMessage('Connecting to ws://192.168.2.178:64008/ws...', 'system');
+            updateStatus('Connecting...');
+            
+            ws = new WebSocket('ws://192.168.2.178:64008/ws');
+            
+            ws.onopen = function(event) {
+                addMessage('✅ Connected to WebSocket', 'system');
+                updateStatus('Connected (not authenticated)', true);
+            };
+
+            ws.onmessage = function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    handleWebSocketMessage(data);
+                } catch (e) {
+                    addMessage(`Failed to parse message: ${event.data}`, 'error');
+                }
+            };
+
+            ws.onclose = function(event) {
+                addMessage(`❌ Connection closed (code: ${event.code})`, 'error');
+                updateStatus('Disconnected', false, true);
+                isAuthenticated = false;
+            };
+
+            ws.onerror = function(error) {
+                addMessage('💥 WebSocket error occurred', 'error');
+                updateStatus('Error', false, true);
+            };
+        }
+
+        function authenticate() {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                addMessage('❌ Not connected to WebSocket', 'error');
+                return;
+            }
+            
+            const authMsg = {
+                type: 'auth',
+                username: 'admin',
+                password: 'password123'
+            };
+            
+            addMessage('🔐 Authenticating...', 'system');
+            ws.send(JSON.stringify(authMsg));
+        }
+
+        function sendMessage() {
+            const message = messageInput.value.trim();
+            if (!message) return;
+            
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                addMessage('❌ Not connected', 'error');
+                return;
+            }
+            
+            if (!isAuthenticated) {
+                addMessage('❌ Not authenticated', 'error');
+                return;
+            }
+            
+            const commandMsg = {
+                type: 'command',
+                command: message
+            };
+            
+            addMessage(`Sending: ${message}`, 'user');
+            ws.send(JSON.stringify(commandMsg));
+            messageInput.value = '';
+        }
+
+        function clearMessages() {
+            terminal.innerHTML = '';
+        }
+
+        // Handle Enter key
+        messageInput.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter' && !messageInput.disabled) {
+                sendMessage();
+            }
+        });
+
+        // Auto-connect on load
+        window.onload = function() {
+            addMessage('🚀 Flutter WebSocket Mimic Test started', 'system');
+            addMessage('This replicates the exact Flutter WebSocket behavior', 'system');
+            addMessage('Click "Connect" then "Authenticate" to start testing', 'system');
+            addMessage('──────────────────────────────────────────────────', 'system');
+        };
+    </script>
+</body>
+</html>

@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WebSocket Debug Test</title>
+    <style>
+        body { font-family: monospace; margin: 20px; background: #1a1a1a; color: #fff; }
+        #messages { border: 1px solid #333; height: 500px; overflow-y: scroll; padding: 10px; background: #0d1117; margin: 10px 0; }
+        .message { margin: 2px 0; padding: 2px; }
+        .sent { color: #58a6ff; }
+        .received { color: #7ee787; }
+        .error { color: #f85149; }
+        .system { color: #f2cc60; }
+        button, input { margin: 5px; padding: 8px; background: #21262d; color: #fff; border: 1px solid #444; }
+        button:hover { background: #30363d; }
+        .status { font-weight: bold; margin: 10px 0; padding: 10px; background: #21262d; border-radius: 6px; }
+    </style>
+</head>
+<body>
+    <h1>🔍 Claude-Code WebSocket Debug Test</h1>
+    <div class="status">Status: <span id="status">Disconnected</span></div>
+    
+    <div>
+        <button onclick="connect()">🔌 Connect</button>
+        <button onclick="authenticate()">🔐 Authenticate</button>
+        <button onclick="sendTest()">📝 Send Test Command</button>
+        <button onclick="clearLog()">🗑️ Clear</button>
+        <button onclick="monitorProxy()">📊 Check Proxy Logs</button>
+    </div>
+
+    <div>
+        <input type="text" id="customCommand" placeholder="Enter custom command..." style="width: 300px;">
+        <button onclick="sendCustom()">Send Custom</button>
+    </div>
+
+    <div id="messages"></div>
+
+    <script>
+        let ws;
+        let messageCount = 0;
+        const messages = document.getElementById('messages');
+        const status = document.getElementById('status');
+
+        function log(message, type = 'info') {
+            messageCount++;
+            const div = document.createElement('div');
+            div.className = `message ${type}`;
+            const timestamp = new Date().toISOString().split('T')[1].split('.')[0];
+            
+            let content;
+            if (typeof message === 'object') {
+                content = JSON.stringify(message, null, 2);
+            } else {
+                content = message;
+            }
+            
+            div.innerHTML = `<span style="color: #666;">[${timestamp}] #${messageCount}</span> <strong>${type.toUpperCase()}:</strong> ${content}`;
+            messages.appendChild(div);
+            messages.scrollTop = messages.scrollHeight;
+            
+            // Also log to console for debugging
+            console.log(`[${timestamp}] ${type.toUpperCase()}: `, message);
+        }
+
+        function updateStatus(text, color = '#fff') {
+            status.textContent = text;
+            status.style.color = color;
+        }
+
+        function connect() {
+            if (ws) {
+                ws.close();
+            }
+            
+            log('🔌 Attempting to connect to WebSocket...', 'system');
+            updateStatus('Connecting...', '#f2cc60');
+            
+            const wsUrl = 'ws://192.168.2.178:64008/ws';
+            log(`📡 WebSocket URL: ${wsUrl}`, 'system');
+            
+            ws = new WebSocket(wsUrl);
+            
+            ws.onopen = function(event) {
+                updateStatus('Connected ✅', '#7ee787');
+                log('✅ WebSocket connection opened successfully!', 'received');
+                log(`🔗 Connection details: ${JSON.stringify({
+                    readyState: ws.readyState,
+                    url: ws.url,
+                    protocol: ws.protocol
+                })}`, 'system');
+            };
+
+            ws.onmessage = function(event) {
+                log(`📨 Raw message received: ${event.data}`, 'received');
+                
+                try {
+                    const data = JSON.parse(event.data);
+                    log(`🎯 Parsed message: ${JSON.stringify(data, null, 2)}`, 'received');
+                    
+                    // Specifically highlight claude-output messages
+                    if (data.type === 'claude-output') {
+                        log(`🤖 CLAUDE RESPONSE: "${data.data || data.message}"`, 'system');
+                    }
+                    
+                } catch (e) {
+                    log(`❌ Failed to parse JSON: ${e.message}`, 'error');
+                    log(`📄 Raw data: ${event.data}`, 'error');
+                }
+            };
+
+            ws.onclose = function(event) {
+                updateStatus('Disconnected ❌', '#f85149');
+                log(`❌ WebSocket closed. Code: ${event.code}, Reason: "${event.reason}", Clean: ${event.wasClean}`, 'error');
+            };
+
+            ws.onerror = function(error) {
+                updateStatus('Error 💥', '#f85149');
+                log(`💥 WebSocket error: ${JSON.stringify(error)}`, 'error');
+            };
+        }
+
+        function authenticate() {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                log('❌ WebSocket not connected. Connect first!', 'error');
+                return;
+            }
+            
+            const authMsg = {
+                type: 'auth',
+                username: 'admin',
+                password: 'password123'
+            };
+            
+            log(`🔐 Sending authentication: ${JSON.stringify(authMsg)}`, 'sent');
+            ws.send(JSON.stringify(authMsg));
+        }
+
+        function sendTest() {
+            sendCommand('create a simple hello world in go');
+        }
+
+        function sendCustom() {
+            const cmd = document.getElementById('customCommand').value;
+            if (cmd.trim()) {
+                sendCommand(cmd.trim());
+                document.getElementById('customCommand').value = '';
+            }
+        }
+
+        function sendCommand(command) {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                log('❌ WebSocket not connected. Connect first!', 'error');
+                return;
+            }
+            
+            const commandMsg = {
+                type: 'command',
+                command: command
+            };
+            
+            log(`📝 Sending command: ${JSON.stringify(commandMsg)}`, 'sent');
+            ws.send(JSON.stringify(commandMsg));
+            
+            // Start monitoring for response
+            log(`⏱️ Waiting for Claude response to: "${command}"`, 'system');
+        }
+
+        function clearLog() {
+            messages.innerHTML = '';
+            messageCount = 0;
+            log('🗑️ Log cleared', 'system');
+        }
+
+        function monitorProxy() {
+            log('📊 Check proxy logs at: /app/claude-code-app/proxy-server/proxy.log', 'system');
+            log('🔍 Look for: "Successfully sent message type=claude-output"', 'system');
+        }
+
+        // Auto-connect on page load
+        window.onload = function() {
+            log('🚀 WebSocket Debug Test started', 'system');
+            log('📋 Instructions:', 'system');
+            log('1. Click "Connect" to establish WebSocket connection', 'system');
+            log('2. Click "Authenticate" to login (admin/password123)', 'system');
+            log('3. Click "Send Test Command" or enter custom command', 'system');
+            log('4. Watch for Claude responses in green', 'system');
+            log('───────────────────────────────────────────────────────', 'system');
+        };
+
+        // Handle enter key in custom command input
+        document.getElementById('customCommand').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                sendCustom();
+            }
+        });
+    </script>
+</body>
+</html>
