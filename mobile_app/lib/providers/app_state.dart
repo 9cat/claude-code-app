@@ -42,14 +42,20 @@ class AppState extends ChangeNotifier {
     
     MessageType messageType;
     switch (type) {
-      case 'output':
       case 'claude-output':
         messageType = MessageType.assistant;
+        break;
+      case 'user-input':
+        messageType = MessageType.user;
+        break;
+      case 'output':
+        messageType = MessageType.system;
         break;
       case 'system':
       case 'auth-success':
       case 'claude-started':
       case 'command-complete':
+      case 'claude-session-ended':
         messageType = MessageType.system;
         break;
       case 'error':
@@ -57,6 +63,11 @@ class AppState extends ChangeNotifier {
         break;
       default:
         messageType = MessageType.system;
+    }
+
+    // Don't add empty messages
+    if (content.toString().trim().isEmpty) {
+      return;
     }
 
     addMessage(ChatMessage(

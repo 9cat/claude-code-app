@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WebSocket Test</title>
+</head>
+<body>
+    <h1>Claude-Code WebSocket Test</h1>
+    <div id="messages"></div>
+    <input type="button" value="Connect" onclick="connect()">
+    <input type="button" value="Auth" onclick="authenticate()">
+    <input type="button" value="Test Command" onclick="sendCommand()">
+
+    <script>
+        let ws;
+        const messages = document.getElementById('messages');
+
+        function log(message) {
+            const div = document.createElement('div');
+            div.innerHTML = new Date().toLocaleTimeString() + ': ' + JSON.stringify(message, null, 2);
+            messages.appendChild(div);
+        }
+
+        function connect() {
+            ws = new WebSocket('ws://192.168.2.178:64008/ws');
+            
+            ws.onopen = function(event) {
+                log({type: 'connection', status: 'opened'});
+            };
+
+            ws.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+                log({type: 'received', data: data});
+            };
+
+            ws.onclose = function(event) {
+                log({type: 'connection', status: 'closed', code: event.code});
+            };
+
+            ws.onerror = function(error) {
+                log({type: 'error', error: error});
+            };
+        }
+
+        function authenticate() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                const authMsg = {
+                    type: 'auth',
+                    username: 'admin',
+                    password: 'password123'
+                };
+                ws.send(JSON.stringify(authMsg));
+                log({type: 'sent', data: authMsg});
+            } else {
+                log({type: 'error', message: 'WebSocket not connected'});
+            }
+        }
+
+        function sendCommand() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                const commandMsg = {
+                    type: 'command',
+                    command: 'echo "Hello from WebSocket test"'
+                };
+                ws.send(JSON.stringify(commandMsg));
+                log({type: 'sent', data: commandMsg});
+            } else {
+                log({type: 'error', message: 'WebSocket not connected'});
+            }
+        }
+    </script>
+</body>
+</html>

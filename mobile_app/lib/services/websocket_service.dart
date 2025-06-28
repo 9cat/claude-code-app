@@ -71,17 +71,26 @@ class WebSocketService {
 
     // Listen for auth response
     subscription = _messageController!.stream.listen((message) {
+      print('Auth response received: $message'); // Debug log
+      
       if (message['type'] == 'auth-success') {
         _authToken = message['token'];
-        subscription.cancel();
-        completer.complete(true);
+        if (!completer.isCompleted) {
+          subscription.cancel();
+          completer.complete(true);
+        }
       } else if (message['type'] == 'error' && !completer.isCompleted) {
+        print('Auth error: ${message['message']}'); // Debug log
         subscription.cancel();
         completer.complete(false);
       }
     });
 
+    // Wait a bit for WebSocket to be ready
+    await Future.delayed(const Duration(milliseconds: 100));
+
     // Send auth request
+    print('Sending auth request for user: $username'); // Debug log
     _sendMessage({
       'type': 'auth',
       'username': username,
@@ -92,6 +101,7 @@ class WebSocketService {
     try {
       return await completer.future.timeout(const Duration(seconds: 10));
     } catch (e) {
+      print('Auth timeout: $e'); // Debug log
       subscription.cancel();
       return false;
     }

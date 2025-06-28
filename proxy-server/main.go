@@ -3,7 +3,9 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -56,13 +58,15 @@ type Claims struct {
 
 // Session management
 type Session struct {
-	ID           string
-	WebSocket    *websocket.Conn
+	ID            string
+	WebSocket     *websocket.Conn
 	Authenticated bool
-	Username     string
-	Process      *exec.Cmd
-	StartTime    time.Time
-	mutex        sync.Mutex
+	Username      string
+	Process       *exec.Cmd
+	ClaudeStdin   io.WriteCloser
+	StartTime     time.Time
+	mutex         sync.Mutex
+	claudeStarted bool
 }
 
 var (
@@ -177,28 +181,15 @@ func wsHandler(c *gin.Context) {
 	}
 	session.sendMessage(welcomeMsg)
 
-	// Handle messages
-	go session.handleMessages()
+	// Handle messages in main loop (not background)
+	session.handleMessages()
 
 	// Cleanup on disconnect
-	defer func() {
-		log.Printf("[%s] WebSocket disconnected", sessionID)
-		session.cleanup()
-		sessionsMutex.Lock()
-		delete(sessions, sessionID)
-		sessionsMutex.Unlock()
-	}()
-
-	// Keep connection alive
-	for {
-		_, _, err := conn.ReadMessage()
-		if err != nil {
-			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				log.Printf("[%s] WebSocket error: %v", sessionID, err)
-			}
-			break
-		}
-	}
+	log.Printf("[%s] WebSocket disconnected", sessionID)
+	session.cleanup()
+	sessionsMutex.Lock()
+	delete(sessions, sessionID)
+	sessionsMutex.Unlock()
 }
 
 // Session methods
@@ -221,27 +212,53 @@ func (s *Session) sendError(message string) {
 
 func (s *Session) handleMessages() {
 	for {
-		var msg WSMessage
-		err := s.WebSocket.ReadJSON(&msg)
+		messageType, message, err := s.WebSocket.ReadMessage()
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				log.Printf("[%s] Message read error: %v", s.ID, err)
+				log.Printf("[%s] WebSocket error: %v", s.ID, err)
 			}
 			break
 		}
+
+		// Handle ping/pong for keep-alive
+		if messageType == websocket.PingMessage {
+			if err := s.WebSocket.WriteMessage(websocket.PongMessage, nil); err != nil {
+				log.Printf("[%s] Error sending pong: %v", s.ID, err)
+				break
+			}
+			continue
+		}
+
+		// Log received messages for debugging
+		log.Printf("[%s] Received message type %d, length %d: %s", s.ID, messageType, len(message), string(message))
+
+		// Only process text messages
+		if messageType != websocket.TextMessage {
+			continue
+		}
+
+		// Parse JSON message
+		var msg WSMessage
+		if err := json.Unmarshal(message, &msg); err != nil {
+			log.Printf("[%s] Error parsing JSON: %v", s.ID, err)
+			s.sendError("Invalid JSON message")
+			continue
+		}
+
+		log.Printf("[%s] Parsed message: type=%s, auth=%v", s.ID, msg.Type, s.Authenticated)
 
 		switch msg.Type {
 		case "auth":
 			s.handleAuth(msg)
 		case "command":
 			if s.Authenticated {
-				s.handleCommand(msg)
+				s.sendToClaudeSession(msg.Command)
 			} else {
 				s.sendError("Authentication required")
 			}
 		case "claude-start":
 			if s.Authenticated {
-				s.startClaudeSession()
+				s.startPersistentClaudeSession()
 			} else {
 				s.sendError("Authentication required")
 			}
@@ -257,6 +274,8 @@ func (s *Session) handleMessages() {
 }
 
 func (s *Session) handleAuth(msg WSMessage) {
+	log.Printf("[%s] Auth attempt: username=%s, hasToken=%v", s.ID, msg.Username, msg.Token != "")
+
 	if msg.Token != "" {
 		// Verify existing token
 		token, err := jwt.ParseWithClaims(msg.Token, &Claims{}, func(token *jwt.Token) (interface{}, error) {
@@ -264,6 +283,7 @@ func (s *Session) handleAuth(msg WSMessage) {
 		})
 
 		if err != nil {
+			log.Printf("[%s] Token verification failed: %v", s.ID, err)
 			s.sendError("Invalid token")
 			return
 		}
@@ -271,16 +291,20 @@ func (s *Session) handleAuth(msg WSMessage) {
 		if claims, ok := token.Claims.(*Claims); ok && token.Valid {
 			s.Username = claims.Username
 			s.Authenticated = true
+			log.Printf("[%s] Token auth successful for user: %s", s.ID, s.Username)
 			s.sendMessage(WSMessage{
 				Type:    "auth-success",
 				Message: fmt.Sprintf("Welcome back, %s!", s.Username),
 				User:    s.Username,
 			})
 		} else {
+			log.Printf("[%s] Token validation failed", s.ID)
 			s.sendError("Token validation failed")
 		}
 	} else if msg.Username != "" && msg.Password != "" {
 		// Direct username/password auth
+		log.Printf("[%s] Password auth attempt for user: %s", s.ID, msg.Username)
+		
 		if Users[msg.Username] == msg.Password {
 			s.Username = msg.Username
 			s.Authenticated = true
@@ -297,110 +321,49 @@ func (s *Session) handleAuth(msg WSMessage) {
 			token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 			tokenString, _ := token.SignedString([]byte(JWTSecret))
 
+			log.Printf("[%s] Password auth successful for user: %s", s.ID, s.Username)
 			s.sendMessage(WSMessage{
 				Type:    "auth-success",
 				Message: fmt.Sprintf("Authentication successful! Welcome, %s", s.Username),
 				Token:   tokenString,
 				User:    s.Username,
 			})
+			
+			// Automatically start Claude session after authentication
+			go func() {
+				time.Sleep(1 * time.Second) // Give UI time to process auth success
+				s.startPersistentClaudeSession()
+			}()
 		} else {
+			log.Printf("[%s] Invalid credentials for user: %s", s.ID, msg.Username)
 			s.sendError("Invalid credentials")
 		}
 	} else {
+		log.Printf("[%s] Missing auth data", s.ID)
 		s.sendError("Missing authentication data")
 	}
 }
 
-func (s *Session) handleCommand(msg WSMessage) {
-	command := msg.Command
-	if command == "" {
-		command = msg.Data
-	}
-	if command == "" {
-		s.sendError("No command provided")
+// Start persistent Claude session that remembers conversation
+func (s *Session) startPersistentClaudeSession() {
+	if s.claudeStarted {
+		log.Printf("[%s] Claude session already running", s.ID)
 		return
 	}
 
-	log.Printf("[%s] Executing command: %s", s.ID, command)
-
-	// Kill existing process if any
-	s.killProcess()
-
-	// Execute command in Claude-Code container
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
-
-	s.Process = exec.CommandContext(ctx, "docker", "exec", "-i", ClaudeContainer, "bash", "-c", command)
-
-	stdout, err := s.Process.StdoutPipe()
-	if err != nil {
-		s.sendError(fmt.Sprintf("Failed to create stdout pipe: %v", err))
-		return
-	}
-
-	stderr, err := s.Process.StderrPipe()
-	if err != nil {
-		s.sendError(fmt.Sprintf("Failed to create stderr pipe: %v", err))
-		return
-	}
-
-	if err := s.Process.Start(); err != nil {
-		s.sendError(fmt.Sprintf("Failed to start command: %v", err))
-		return
-	}
-
-	// Handle stdout
-	go func() {
-		scanner := bufio.NewScanner(stdout)
-		for scanner.Scan() {
-			s.sendMessage(WSMessage{
-				Type:   "output",
-				Data:   scanner.Text(),
-				Source: "stdout",
-			})
-		}
-	}()
-
-	// Handle stderr
-	go func() {
-		scanner := bufio.NewScanner(stderr)
-		for scanner.Scan() {
-			s.sendMessage(WSMessage{
-				Type:   "output",
-				Data:   scanner.Text(),
-				Source: "stderr",
-			})
-		}
-	}()
-
-	// Wait for completion
-	go func() {
-		err := s.Process.Wait()
-		exitCode := 0
-		if err != nil {
-			if exitError, ok := err.(*exec.ExitError); ok {
-				exitCode = exitError.ExitCode()
-			}
-		}
-
-		s.sendMessage(WSMessage{
-			Type:     "command-complete",
-			ExitCode: exitCode,
-			Message:  fmt.Sprintf("Command completed with exit code: %d", exitCode),
-		})
-
-		s.Process = nil
-	}()
-}
-
-func (s *Session) startClaudeSession() {
-	log.Printf("[%s] Starting Claude interactive session", s.ID)
+	log.Printf("[%s] Starting persistent Claude interactive session", s.ID)
 
 	s.killProcess()
 
-	// Start interactive Claude session
-	ctx := context.Background()
-	s.Process = exec.CommandContext(ctx, "docker", "exec", "-it", ClaudeContainer, "claude")
+	// Start interactive bash session in current container (we're already in claude-code container)
+	s.Process = exec.Command("bash")
+
+	stdin, err := s.Process.StdinPipe()
+	if err != nil {
+		s.sendError(fmt.Sprintf("Failed to create stdin pipe: %v", err))
+		return
+	}
+	s.ClaudeStdin = stdin
 
 	stdout, err := s.Process.StdoutPipe()
 	if err != nil {
@@ -419,37 +382,67 @@ func (s *Session) startClaudeSession() {
 		return
 	}
 
-	// Handle stdout
+	s.claudeStarted = true
+
+	// Handle stdout - continuous output from Claude
 	go func() {
 		scanner := bufio.NewScanner(stdout)
 		for scanner.Scan() {
+			output := scanner.Text()
+			log.Printf("[%s] Claude stdout: %s", s.ID, output)
 			s.sendMessage(WSMessage{
 				Type:   "claude-output",
-				Data:   scanner.Text(),
+				Data:   output,
 				Source: "claude",
 			})
 		}
+		log.Printf("[%s] Claude stdout closed", s.ID)
 	}()
 
 	// Handle stderr
 	go func() {
 		scanner := bufio.NewScanner(stderr)
 		for scanner.Scan() {
+			output := scanner.Text()
+			log.Printf("[%s] Claude stderr: %s", s.ID, output)
 			s.sendMessage(WSMessage{
 				Type:   "claude-output",
-				Data:   scanner.Text(),
+				Data:   output,
 				Source: "claude-error",
 			})
 		}
+		log.Printf("[%s] Claude stderr closed", s.ID)
 	}()
 
-	// Send initial message
+	// Send initial message and start Claude-Code CLI
 	s.sendMessage(WSMessage{
 		Type:    "claude-started",
-		Message: "Claude interactive session started",
+		Message: "🚀 Claude-Code CLI session started! Ready for project development.",
 	})
 
-	// Wait for completion
+	// Auto-start Claude-Code CLI in the bash session after a short delay
+	go func() {
+		time.Sleep(1 * time.Second)
+		log.Printf("[%s] Auto-starting Claude-Code CLI in bash session", s.ID)
+		
+		// Send environment setup and claude command
+		commands := []string{
+			"cd /app",  // Go to the app directory
+			"export TERM=xterm-256color",  // Set terminal type
+			"claude",   // Start Claude-Code CLI
+		}
+		
+		for _, cmd := range commands {
+			_, err := s.ClaudeStdin.Write([]byte(cmd + "\n"))
+			if err != nil {
+				log.Printf("[%s] Error sending command '%s': %v", s.ID, cmd, err)
+				return
+			}
+			time.Sleep(500 * time.Millisecond)  // Small delay between commands
+		}
+	}()
+
+	// Wait for process completion
 	go func() {
 		err := s.Process.Wait()
 		exitCode := 0
@@ -459,24 +452,77 @@ func (s *Session) startClaudeSession() {
 			}
 		}
 
+		log.Printf("[%s] Claude session ended with exit code: %d", s.ID, exitCode)
+		s.claudeStarted = false
+		s.ClaudeStdin = nil
+		s.Process = nil
+
 		s.sendMessage(WSMessage{
 			Type:     "claude-session-ended",
 			ExitCode: exitCode,
-			Message:  "Claude session ended",
+			Message:  "Claude-Code CLI session ended. Development history preserved.",
 		})
-
-		s.Process = nil
 	}()
 }
 
+// Send command to existing Claude-Code CLI session
+func (s *Session) sendToClaudeSession(command string) {
+	if command == "" {
+		s.sendError("No command provided")
+		return
+	}
+
+	// Start Claude-Code session if not already running
+	if !s.claudeStarted {
+		s.startPersistentClaudeSession()
+		// Wait a bit for Claude-Code CLI to start
+		time.Sleep(3 * time.Second)
+	}
+
+	if s.ClaudeStdin == nil {
+		s.sendError("Claude-Code CLI session not available")
+		return
+	}
+
+	log.Printf("[%s] Sending to Claude-Code CLI: %s", s.ID, command)
+
+	// Echo the command to UI first (like terminal behavior)
+	s.sendMessage(WSMessage{
+		Type:   "user-input",
+		Data:   "➤ " + command,
+		Source: "user",
+	})
+
+	// Send command to Claude-Code CLI
+	_, err := s.ClaudeStdin.Write([]byte(command + "\n"))
+	if err != nil {
+		log.Printf("[%s] Error writing to Claude-Code CLI stdin: %v", s.ID, err)
+		s.sendError(fmt.Sprintf("Failed to send command to Claude-Code CLI: %v", err))
+		
+		// Try to restart the session
+		s.claudeStarted = false
+		go func() {
+			time.Sleep(1 * time.Second)
+			s.startPersistentClaudeSession()
+		}()
+		return
+	}
+}
+
 func (s *Session) killProcess() {
+	if s.ClaudeStdin != nil {
+		s.ClaudeStdin.Close()
+		s.ClaudeStdin = nil
+	}
 	if s.Process != nil && s.Process.Process != nil {
 		s.Process.Process.Kill()
 		s.Process = nil
 	}
+	s.claudeStarted = false
 }
 
 func (s *Session) cleanup() {
+	log.Printf("[%s] Cleaning up session", s.ID)
 	s.killProcess()
 	if s.WebSocket != nil {
 		s.WebSocket.Close()
