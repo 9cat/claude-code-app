@@ -37,10 +37,16 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF1E1E1E),
+      backgroundColor: const Color(0xFF0D1117),
       appBar: AppBar(
-        title: const Text('Claude-Code Terminal'),
-        backgroundColor: const Color(0xFF2D2D30),
+        title: Row(
+          children: [
+            Icon(Icons.terminal, color: Colors.green[300], size: 20),
+            const SizedBox(width: 8),
+            const Text('Claude-Code CLI', style: TextStyle(fontFamily: 'monospace')),
+          ],
+        ),
+        backgroundColor: const Color(0xFF161B22),
         foregroundColor: Colors.white,
         elevation: 0,
         actions: [
@@ -92,102 +98,70 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Widget _buildMessageBubble(ChatMessage message) {
-    Color bubbleColor;
-    Color textColor = Colors.white;
-    IconData? icon;
-
+    // Terminal-style colors
+    Color promptColor = Colors.blue[300]!;
+    Color outputColor = Colors.green[300]!;
+    Color systemColor = Colors.yellow[300]!;
+    Color errorColor = Colors.red[300]!;
+    
+    String prefix;
+    Color textColor;
+    
     switch (message.type) {
       case MessageType.user:
-        bubbleColor = Colors.blue[600]!;
-        icon = Icons.person;
+        prefix = '➤ ';
+        textColor = promptColor;
         break;
       case MessageType.assistant:
-        bubbleColor = const Color(0xFF2D2D30);
-        icon = Icons.smart_toy;
+        prefix = '';
+        textColor = outputColor;
         break;
       case MessageType.system:
-        bubbleColor = Colors.green[700]!;
-        icon = Icons.terminal;
+        prefix = '[SYSTEM] ';
+        textColor = systemColor;
         break;
       case MessageType.error:
-        bubbleColor = Colors.red[700]!;
-        icon = Icons.error;
+        prefix = '[ERROR] ';
+        textColor = errorColor;
         break;
     }
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 12),
+      margin: const EdgeInsets.only(bottom: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: 32,
-            height: 32,
-            decoration: BoxDecoration(
-              color: bubbleColor,
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: Icon(
-              icon,
-              size: 16,
-              color: textColor,
+          // Terminal-style timestamp
+          Text(
+            _formatTime(message.timestamp),
+            style: TextStyle(
+              color: Colors.grey[600],
+              fontSize: 11,
+              fontFamily: 'monospace',
             ),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 8),
+          // Message content
           Expanded(
-            child: Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: bubbleColor.withOpacity(0.2),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                  color: bubbleColor.withOpacity(0.3),
-                  width: 1,
-                ),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+            child: RichText(
+              text: TextSpan(
                 children: [
-                  Text(
-                    _getMessageTypeLabel(message.type),
+                  TextSpan(
+                    text: prefix,
                     style: TextStyle(
-                      color: bubbleColor,
+                      color: textColor,
                       fontWeight: FontWeight.bold,
-                      fontSize: 12,
+                      fontFamily: 'monospace',
+                      fontSize: 14,
                     ),
                   ),
-                  const SizedBox(height: 4),
-                  if (message.type == MessageType.assistant)
-                    MarkdownBody(
-                      data: message.content,
-                      styleSheet: MarkdownStyleSheet(
-                        p: TextStyle(color: textColor),
-                        code: TextStyle(
-                          backgroundColor: Colors.grey[800],
-                          color: Colors.green[300],
-                          fontFamily: 'monospace',
-                        ),
-                        codeblockDecoration: BoxDecoration(
-                          color: Colors.grey[900],
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                      ),
-                    )
-                  else
-                    Text(
-                      message.content,
-                      style: TextStyle(
-                        color: textColor,
-                        fontFamily: message.type == MessageType.system ? 'monospace' : null,
-                        fontSize: message.type == MessageType.system ? 12 : 14,
-                      ),
-                    ),
-                  const SizedBox(height: 4),
-                  Text(
-                    _formatTime(message.timestamp),
+                  TextSpan(
+                    text: message.content,
                     style: TextStyle(
-                      color: Colors.grey[500],
-                      fontSize: 10,
+                      color: message.type == MessageType.assistant ? outputColor : textColor,
+                      fontFamily: 'monospace',
+                      fontSize: 14,
                     ),
                   ),
                 ],
@@ -213,21 +187,42 @@ class _ChatScreenState extends State<ChatScreen> {
           Expanded(
             child: TextField(
               controller: _messageController,
-              style: const TextStyle(color: Colors.white),
+              style: const TextStyle(
+                color: Colors.white,
+                fontFamily: 'monospace',
+                fontSize: 14,
+              ),
               maxLines: null,
               decoration: InputDecoration(
+                prefixText: appState.isConnected ? '➤ ' : '✗ ',
+                prefixStyle: TextStyle(
+                  color: appState.isConnected ? Colors.blue[300] : Colors.red[300],
+                  fontWeight: FontWeight.bold,
+                  fontFamily: 'monospace',
+                ),
                 hintText: appState.isConnected
-                    ? 'Type your command or question...'
+                    ? 'Enter your command...'
                     : 'Not connected to server',
-                hintStyle: TextStyle(color: Colors.grey[500]),
+                hintStyle: TextStyle(
+                  color: Colors.grey[500],
+                  fontFamily: 'monospace',
+                ),
                 filled: true,
-                fillColor: const Color(0xFF1E1E1E),
+                fillColor: const Color(0xFF0D1117),
                 border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(24),
-                  borderSide: BorderSide.none,
+                  borderRadius: BorderRadius.circular(4),
+                  borderSide: BorderSide(color: Colors.grey[700]!),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(4),
+                  borderSide: BorderSide(color: Colors.grey[700]!),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(4),
+                  borderSide: BorderSide(color: Colors.blue[300]!),
                 ),
                 contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 16,
+                  horizontal: 12,
                   vertical: 12,
                 ),
               ),

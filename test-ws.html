@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WebSocket Test - Fixed</title>
+    <style>
+        body { font-family: monospace; margin: 20px; }
+        #messages { border: 1px solid #ccc; height: 400px; overflow-y: scroll; padding: 10px; background: #f5f5f5; }
+        .message { margin: 5px 0; padding: 5px; border-left: 3px solid #007acc; }
+        .sent { border-left-color: #00aa00; background: #f0fff0; }
+        .received { border-left-color: #0066cc; background: #f0f8ff; }
+        .error { border-left-color: #cc0000; background: #fff0f0; }
+        button { margin: 5px; padding: 10px; }
+        .status { font-weight: bold; margin: 10px 0; }
+    </style>
+</head>
+<body>
+    <h1>Claude-Code WebSocket Test (Fixed)</h1>
+    <div class="status">Status: <span id="status">Disconnected</span></div>
+    
+    <button onclick="connect()">Connect</button>
+    <button onclick="authenticate()">Auth</button>
+    <button onclick="sendTestCommand()">Send Test Command</button>
+    <button onclick="clearMessages()">Clear</button>
+
+    <div id="messages"></div>
+
+    <script>
+        let ws;
+        const messages = document.getElementById('messages');
+        const status = document.getElementById('status');
+
+        function log(message, type = 'info') {
+            const div = document.createElement('div');
+            div.className = `message ${type}`;
+            const timestamp = new Date().toLocaleTimeString();
+            
+            if (typeof message === 'object') {
+                div.innerHTML = `<strong>${timestamp}:</strong> <pre>${JSON.stringify(message, null, 2)}</pre>`;
+            } else {
+                div.innerHTML = `<strong>${timestamp}:</strong> ${message}`;
+            }
+            
+            messages.appendChild(div);
+            messages.scrollTop = messages.scrollHeight;
+        }
+
+        function updateStatus(text) {
+            status.textContent = text;
+        }
+
+        function connect() {
+            if (ws) {
+                ws.close();
+            }
+            
+            updateStatus('Connecting...');
+            ws = new WebSocket('ws://localhost:64008/ws');
+            
+            ws.onopen = function(event) {
+                updateStatus('Connected');
+                log('✅ Connected to WebSocket', 'received');
+            };
+
+            ws.onmessage = function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    log(data, 'received');
+                } catch (e) {
+                    log(`Raw message: ${event.data}`, 'received');
+                }
+            };
+
+            ws.onclose = function(event) {
+                updateStatus('Disconnected');
+                log(`❌ Connection closed (code: ${event.code})`, 'error');
+            };
+
+            ws.onerror = function(error) {
+                updateStatus('Error');
+                log(`💥 WebSocket error: ${error}`, 'error');
+            };
+        }
+
+        function authenticate() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                const authMsg = {
+                    type: 'auth',
+                    username: 'admin',
+                    password: 'password123'
+                };
+                ws.send(JSON.stringify(authMsg));
+                log(authMsg, 'sent');
+            } else {
+                log('❌ WebSocket not connected', 'error');
+            }
+        }
+
+        function sendTestCommand() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                const commandMsg = {
+                    type: 'command',
+                    command: 'create a simple hello world in go'
+                };
+                ws.send(JSON.stringify(commandMsg));
+                log(commandMsg, 'sent');
+            } else {
+                log('❌ WebSocket not connected', 'error');
+            }
+        }
+
+        function clearMessages() {
+            messages.innerHTML = '';
+        }
+
+        // Auto-connect on load
+        window.onload = function() {
+            log('🚀 Starting WebSocket test...', 'info');
+            connect();
+        };
+    </script>
+</body>
+</html>

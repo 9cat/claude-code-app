@@ -1,11 +1,9 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"os"
@@ -62,8 +60,6 @@ type Session struct {
 	WebSocket     *websocket.Conn
 	Authenticated bool
 	Username      string
-	Process       *exec.Cmd
-	ClaudeStdin   io.WriteCloser
 	StartTime     time.Time
 	mutex         sync.Mutex
 	claudeStarted bool
@@ -197,8 +193,11 @@ func (s *Session) sendMessage(msg WSMessage) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
+	log.Printf("[%s] Sending message type=%s data=%s", s.ID, msg.Type, msg.Data)
 	if err := s.WebSocket.WriteJSON(msg); err != nil {
 		log.Printf("[%s] Error sending message: %v", s.ID, err)
+	} else {
+		log.Printf("[%s] Successfully sent message type=%s", s.ID, msg.Type)
 	}
 }
 
@@ -351,118 +350,14 @@ func (s *Session) startPersistentClaudeSession() {
 		return
 	}
 
-	log.Printf("[%s] Starting persistent Claude interactive session", s.ID)
-
-	s.killProcess()
-
-	// Start interactive bash session in current container (we're already in claude-code container)
-	s.Process = exec.Command("bash")
-
-	stdin, err := s.Process.StdinPipe()
-	if err != nil {
-		s.sendError(fmt.Sprintf("Failed to create stdin pipe: %v", err))
-		return
-	}
-	s.ClaudeStdin = stdin
-
-	stdout, err := s.Process.StdoutPipe()
-	if err != nil {
-		s.sendError(fmt.Sprintf("Failed to create stdout pipe: %v", err))
-		return
-	}
-
-	stderr, err := s.Process.StderrPipe()
-	if err != nil {
-		s.sendError(fmt.Sprintf("Failed to create stderr pipe: %v", err))
-		return
-	}
-
-	if err := s.Process.Start(); err != nil {
-		s.sendError(fmt.Sprintf("Failed to start Claude session: %v", err))
-		return
-	}
-
+	log.Printf("[%s] Starting persistent Claude session", s.ID)
 	s.claudeStarted = true
 
-	// Handle stdout - continuous output from Claude
-	go func() {
-		scanner := bufio.NewScanner(stdout)
-		for scanner.Scan() {
-			output := scanner.Text()
-			log.Printf("[%s] Claude stdout: %s", s.ID, output)
-			s.sendMessage(WSMessage{
-				Type:   "claude-output",
-				Data:   output,
-				Source: "claude",
-			})
-		}
-		log.Printf("[%s] Claude stdout closed", s.ID)
-	}()
-
-	// Handle stderr
-	go func() {
-		scanner := bufio.NewScanner(stderr)
-		for scanner.Scan() {
-			output := scanner.Text()
-			log.Printf("[%s] Claude stderr: %s", s.ID, output)
-			s.sendMessage(WSMessage{
-				Type:   "claude-output",
-				Data:   output,
-				Source: "claude-error",
-			})
-		}
-		log.Printf("[%s] Claude stderr closed", s.ID)
-	}()
-
-	// Send initial message and start Claude-Code CLI
+	// Send initial message
 	s.sendMessage(WSMessage{
 		Type:    "claude-started",
-		Message: "🚀 Claude-Code CLI session started! Ready for project development.",
+		Message: "🚀 Claude-Code CLI session ready! Ready for project development.",
 	})
-
-	// Auto-start Claude-Code CLI in the bash session after a short delay
-	go func() {
-		time.Sleep(1 * time.Second)
-		log.Printf("[%s] Auto-starting Claude-Code CLI in bash session", s.ID)
-		
-		// Send environment setup and claude command
-		commands := []string{
-			"cd /app",  // Go to the app directory
-			"export TERM=xterm-256color",  // Set terminal type
-			"claude",   // Start Claude-Code CLI
-		}
-		
-		for _, cmd := range commands {
-			_, err := s.ClaudeStdin.Write([]byte(cmd + "\n"))
-			if err != nil {
-				log.Printf("[%s] Error sending command '%s': %v", s.ID, cmd, err)
-				return
-			}
-			time.Sleep(500 * time.Millisecond)  // Small delay between commands
-		}
-	}()
-
-	// Wait for process completion
-	go func() {
-		err := s.Process.Wait()
-		exitCode := 0
-		if err != nil {
-			if exitError, ok := err.(*exec.ExitError); ok {
-				exitCode = exitError.ExitCode()
-			}
-		}
-
-		log.Printf("[%s] Claude session ended with exit code: %d", s.ID, exitCode)
-		s.claudeStarted = false
-		s.ClaudeStdin = nil
-		s.Process = nil
-
-		s.sendMessage(WSMessage{
-			Type:     "claude-session-ended",
-			ExitCode: exitCode,
-			Message:  "Claude-Code CLI session ended. Development history preserved.",
-		})
-	}()
 }
 
 // Send command to existing Claude-Code CLI session
@@ -475,13 +370,6 @@ func (s *Session) sendToClaudeSession(command string) {
 	// Start Claude-Code session if not already running
 	if !s.claudeStarted {
 		s.startPersistentClaudeSession()
-		// Wait a bit for Claude-Code CLI to start
-		time.Sleep(3 * time.Second)
-	}
-
-	if s.ClaudeStdin == nil {
-		s.sendError("Claude-Code CLI session not available")
-		return
 	}
 
 	log.Printf("[%s] Sending to Claude-Code CLI: %s", s.ID, command)
@@ -493,31 +381,46 @@ func (s *Session) sendToClaudeSession(command string) {
 		Source: "user",
 	})
 
-	// Send command to Claude-Code CLI
-	_, err := s.ClaudeStdin.Write([]byte(command + "\n"))
-	if err != nil {
-		log.Printf("[%s] Error writing to Claude-Code CLI stdin: %v", s.ID, err)
-		s.sendError(fmt.Sprintf("Failed to send command to Claude-Code CLI: %v", err))
+	// Execute Claude command in print mode for reliable output
+	go func() {
+		// Change to /app directory and run claude with the command
+		cmd := exec.Command("sh", "-c", fmt.Sprintf("cd /app && echo '%s' | claude --print", command))
 		
-		// Try to restart the session
-		s.claudeStarted = false
-		go func() {
-			time.Sleep(1 * time.Second)
-			s.startPersistentClaudeSession()
-		}()
-		return
-	}
+		output, err := cmd.Output()
+		if err != nil {
+			log.Printf("[%s] Error executing Claude command: %v", s.ID, err)
+			s.sendMessage(WSMessage{
+				Type:   "claude-output",
+				Data:   fmt.Sprintf("Error executing command: %v", err),
+				Source: "claude-error",
+			})
+			return
+		}
+
+		// Send Claude's response back to the UI
+		responseText := string(output)
+		log.Printf("[%s] Claude response: %s", s.ID, responseText)
+		
+		// Send the full response as one message
+		s.sendMessage(WSMessage{
+			Type:   "claude-output",
+			Data:   responseText,
+			Source: "claude",
+		})
+		
+		// Send completion message
+		s.sendMessage(WSMessage{
+			Type:    "command-complete",
+			Message: "✅ Command completed",
+		})
+		
+		log.Printf("[%s] Sent Claude response to WebSocket client", s.ID)
+	}()
 }
 
 func (s *Session) killProcess() {
-	if s.ClaudeStdin != nil {
-		s.ClaudeStdin.Close()
-		s.ClaudeStdin = nil
-	}
-	if s.Process != nil && s.Process.Process != nil {
-		s.Process.Process.Kill()
-		s.Process = nil
-	}
+	// No longer needed since we use claude --print for each command
+	// instead of maintaining a persistent process
 	s.claudeStarted = false
 }
 

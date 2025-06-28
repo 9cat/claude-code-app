@@ -37,8 +37,12 @@ class AppState extends ChangeNotifier {
   }
 
   void _handleWebSocketMessage(Map<String, dynamic> message) {
+    print('📨 Received WebSocket message: $message');
+    
     final type = message['type'] as String?;
     final content = message['message'] ?? message['data'] ?? '';
+    
+    print('🔍 Message type: $type, content: "$content"');
     
     MessageType messageType;
     switch (type) {
@@ -65,11 +69,13 @@ class AppState extends ChangeNotifier {
         messageType = MessageType.system;
     }
 
-    // Don't add empty messages
+    // Don't add empty messages (but log them)
     if (content.toString().trim().isEmpty) {
+      print('⚠️ Skipping empty message of type: $type');
       return;
     }
 
+    print('✅ Adding message to UI: type=$messageType, content="${content.toString()}"');
     addMessage(ChatMessage(
       id: DateTime.now().millisecondsSinceEpoch.toString(),
       content: content.toString(),

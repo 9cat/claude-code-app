@@ -59,7 +59,7 @@
             if (ws && ws.readyState === WebSocket.OPEN) {
                 const commandMsg = {
                     type: 'command',
-                    command: 'echo "Hello from WebSocket test"'
+                    command: 'please build the hello world by golang'
                 };
                 ws.send(JSON.stringify(commandMsg));
                 log({type: 'sent', data: commandMsg});
