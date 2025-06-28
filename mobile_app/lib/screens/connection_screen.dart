@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../models/ssh_connection.dart';
+import '../models/connection_config.dart';
 import '../providers/app_state.dart';
 
 class ConnectionScreen extends StatefulWidget {
@@ -12,16 +12,14 @@ class ConnectionScreen extends StatefulWidget {
 
 class _ConnectionScreenState extends State<ConnectionScreen> {
   final _formKey = GlobalKey<FormState>();
-  final _hostController = TextEditingController(text: '');
-  final _portController = TextEditingController(text: '22');
-  final _usernameController = TextEditingController(text: 'root');
+  final _serverUrlController = TextEditingController(text: 'http://192.168.2.178:64008');
+  final _usernameController = TextEditingController(text: 'admin');
   final _passwordController = TextEditingController();
   bool _obscurePassword = true;
 
   @override
   void dispose() {
-    _hostController.dispose();
-    _portController.dispose();
+    _serverUrlController.dispose();
     _usernameController.dispose();
     _passwordController.dispose();
     super.dispose();
@@ -57,7 +55,7 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
                   const SizedBox(height: 32),
                   
                   Text(
-                    'Connect to Remote Server',
+                    'Connect to Claude-Code Server',
                     style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                       color: Colors.white,
                       fontWeight: FontWeight.bold,
@@ -68,7 +66,7 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
                   const SizedBox(height: 8),
                   
                   Text(
-                    'Enter your SSH connection details to start coding with Claude-Code',
+                    'Enter your proxy server details to start coding with Claude-Code',
                     style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                       color: Colors.grey[400],
                     ),
@@ -78,31 +76,15 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
                   const SizedBox(height: 40),
                   
                   _buildTextField(
-                    controller: _hostController,
-                    label: 'Host/IP Address',
-                    icon: Icons.dns,
+                    controller: _serverUrlController,
+                    label: 'Server URL',
+                    icon: Icons.language,
                     validator: (value) {
                       if (value?.isEmpty ?? true) {
-                        return 'Please enter host address';
+                        return 'Please enter server URL';
                       }
-                      return null;
-                    },
-                  ),
-                  
-                  const SizedBox(height: 16),
-                  
-                  _buildTextField(
-                    controller: _portController,
-                    label: 'Port',
-                    icon: Icons.settings_ethernet,
-                    keyboardType: TextInputType.number,
-                    validator: (value) {
-                      if (value?.isEmpty ?? true) {
-                        return 'Please enter port number';
-                      }
-                      final port = int.tryParse(value!);
-                      if (port == null || port < 1 || port > 65535) {
-                        return 'Please enter valid port (1-65535)';
+                      if (!value!.startsWith('http://') && !value.startsWith('https://')) {
+                        return 'URL must start with http:// or https://';
                       }
                       return null;
                     },
@@ -181,7 +163,7 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
                   const SizedBox(height: 16),
                   
                   Text(
-                    'Make sure Docker is installed on your server and your Anthropic API key is configured.',
+                    'Default credentials: admin/password123, developer/dev2024, user/user123',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: Colors.grey[500],
                     ),
@@ -241,9 +223,8 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
   Future<void> _connect() async {
     if (!_formKey.currentState!.validate()) return;
 
-    final connection = SSHConnection(
-      host: _hostController.text.trim(),
-      port: int.parse(_portController.text.trim()),
+    final connection = ConnectionConfig(
+      serverUrl: _serverUrlController.text.trim(),
       username: _usernameController.text.trim(),
       password: _passwordController.text.trim(),
     );

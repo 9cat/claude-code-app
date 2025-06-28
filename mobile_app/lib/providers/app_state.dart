@@ -1,23 +1,23 @@
 import 'package:flutter/foundation.dart';
-import '../models/ssh_connection.dart';
+import '../models/connection_config.dart';
 import '../models/chat_message.dart';
-import '../services/ssh_service.dart';
+import '../services/websocket_service.dart';
 import '../services/voice_service.dart';
 
 class AppState extends ChangeNotifier {
-  final SSHService _sshService = SSHService();
+  final WebSocketService _wsService = WebSocketService();
   final VoiceService _voiceService = VoiceService();
   
   final List<ChatMessage> _messages = [];
-  SSHConnection? _currentConnection;
+  ConnectionConfig? _currentConnection;
   bool _isConnecting = false;
   bool _isVoiceEnabled = false;
   String _currentInput = '';
 
   List<ChatMessage> get messages => _messages;
-  SSHConnection? get currentConnection => _currentConnection;
+  ConnectionConfig? get currentConnection => _currentConnection;
   bool get isConnecting => _isConnecting;
-  bool get isConnected => _sshService.isConnected;
+  bool get isConnected => _wsService.isConnected;
   bool get isVoiceEnabled => _isVoiceEnabled;
   bool get isListening => _voiceService.isListening;
   String get currentInput => _currentInput;
@@ -29,45 +29,69 @@ class AppState extends ChangeNotifier {
   Future<void> _initializeServices() async {
     _isVoiceEnabled = await _voiceService.initialize();
     
-    _sshService.outputStream.listen((output) {
-      addMessage(ChatMessage(
-        id: DateTime.now().millisecondsSinceEpoch.toString(),
-        content: output,
-        type: MessageType.system,
-        timestamp: DateTime.now(),
-      ));
+    _wsService.messageStream.listen((message) {
+      _handleWebSocketMessage(message);
     });
     
     notifyListeners();
   }
 
-  Future<bool> connectToServer(SSHConnection connection) async {
+  void _handleWebSocketMessage(Map<String, dynamic> message) {
+    final type = message['type'] as String?;
+    final content = message['message'] ?? message['data'] ?? '';
+    
+    MessageType messageType;
+    switch (type) {
+      case 'output':
+      case 'claude-output':
+        messageType = MessageType.assistant;
+        break;
+      case 'system':
+      case 'auth-success':
+      case 'claude-started':
+      case 'command-complete':
+        messageType = MessageType.system;
+        break;
+      case 'error':
+        messageType = MessageType.error;
+        break;
+      default:
+        messageType = MessageType.system;
+    }
+
+    addMessage(ChatMessage(
+      id: DateTime.now().millisecondsSinceEpoch.toString(),
+      content: content.toString(),
+      type: messageType,
+      timestamp: DateTime.now(),
+    ));
+  }
+
+  Future<bool> connectToServer(ConnectionConfig connection) async {
     _isConnecting = true;
     notifyListeners();
 
     addMessage(ChatMessage(
       id: DateTime.now().millisecondsSinceEpoch.toString(),
-      content: 'Connecting to ${connection.host}:${connection.port}...',
+      content: 'Connecting to ${connection.serverUrl}...',
       type: MessageType.system,
       timestamp: DateTime.now(),
     ));
 
-    final success = await _sshService.connect(connection);
+    final success = await _wsService.connect(connection);
     
     if (success) {
       _currentConnection = connection;
       addMessage(ChatMessage(
         id: DateTime.now().millisecondsSinceEpoch.toString(),
-        content: 'Connected successfully! Starting Claude-Code environment...',
+        content: 'Connected successfully! Ready to interact with Claude-Code.',
         type: MessageType.system,
         timestamp: DateTime.now(),
       ));
-      
-      await _sshService.startClaudeCodeSession();
     } else {
       addMessage(ChatMessage(
         id: DateTime.now().millisecondsSinceEpoch.toString(),
-        content: 'Connection failed. Please check your credentials.',
+        content: 'Connection failed. Please check your server URL and credentials.',
         type: MessageType.error,
         timestamp: DateTime.now(),
       ));
@@ -79,7 +103,7 @@ class AppState extends ChangeNotifier {
   }
 
   void disconnect() {
-    _sshService.disconnect();
+    _wsService.disconnect();
     _currentConnection = null;
     addMessage(ChatMessage(
       id: DateTime.now().millisecondsSinceEpoch.toString(),
@@ -103,8 +127,38 @@ class AppState extends ChangeNotifier {
       timestamp: DateTime.now(),
     ));
 
-    await _sshService.executeCommand(command);
+    try {
+      await _wsService.sendCommand(command);
+    } catch (e) {
+      addMessage(ChatMessage(
+        id: DateTime.now().millisecondsSinceEpoch.toString(),
+        content: 'Error sending command: $e',
+        type: MessageType.error,
+        timestamp: DateTime.now(),
+      ));
+    }
+    
     _currentInput = '';
+    notifyListeners();
+  }
+
+  Future<void> startClaudeSession() async {
+    try {
+      await _wsService.startClaudeSession();
+      addMessage(ChatMessage(
+        id: DateTime.now().millisecondsSinceEpoch.toString(),
+        content: 'Starting Claude interactive session...',
+        type: MessageType.system,
+        timestamp: DateTime.now(),
+      ));
+    } catch (e) {
+      addMessage(ChatMessage(
+        id: DateTime.now().millisecondsSinceEpoch.toString(),
+        content: 'Error starting Claude session: $e',
+        type: MessageType.error,
+        timestamp: DateTime.now(),
+      ));
+    }
     notifyListeners();
   }
 
