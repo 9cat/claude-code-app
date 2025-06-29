@@ -14,7 +14,7 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
   final _formKey = GlobalKey<FormState>();
   final _serverUrlController = TextEditingController(text: 'http://192.168.2.178:64008');
   final _usernameController = TextEditingController(text: 'admin');
-  final _passwordController = TextEditingController();
+  final _passwordController = TextEditingController(text: 'password123');
   bool _obscurePassword = true;
 
   @override

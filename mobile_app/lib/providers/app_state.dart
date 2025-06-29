@@ -29,20 +29,31 @@ class AppState extends ChangeNotifier {
   Future<void> _initializeServices() async {
     _isVoiceEnabled = await _voiceService.initialize();
     
-    _wsService.messageStream.listen((message) {
-      _handleWebSocketMessage(message);
-    });
+    print('🔧 AppState: Setting up WebSocket message stream listener...');
+    _wsService.messageStream.listen(
+      (message) {
+        print('🎯 AppState: Stream listener received message: $message');
+        _handleWebSocketMessage(message);
+      },
+      onError: (error) {
+        print('❌ AppState: Stream listener error: $error');
+      },
+      onDone: () {
+        print('✅ AppState: Stream listener done');
+      },
+    );
     
     notifyListeners();
   }
 
   void _handleWebSocketMessage(Map<String, dynamic> message) {
-    print('📨 Received WebSocket message: $message');
+    print('📨 AppState: Received WebSocket message: $message');
     
     final type = message['type'] as String?;
     final content = message['message'] ?? message['data'] ?? '';
     
-    print('🔍 Message type: $type, content: "$content"');
+    print('🔍 AppState: Message type: $type, content: "$content"');
+    print('🔍 AppState: Current messages count: ${_messages.length}');
     
     MessageType messageType;
     switch (type) {
@@ -71,17 +82,21 @@ class AppState extends ChangeNotifier {
 
     // Don't add empty messages (but log them)
     if (content.toString().trim().isEmpty) {
-      print('⚠️ Skipping empty message of type: $type');
+      print('⚠️ AppState: Skipping empty message of type: $type');
       return;
     }
 
-    print('✅ Adding message to UI: type=$messageType, content="${content.toString()}"');
+    print('✅ AppState: Adding message to UI: type=$messageType, content="${content.toString()}"');
+    print('📝 AppState: Before adding - messages count: ${_messages.length}');
+    
     addMessage(ChatMessage(
       id: DateTime.now().millisecondsSinceEpoch.toString(),
       content: content.toString(),
       type: messageType,
       timestamp: DateTime.now(),
     ));
+    
+    print('📝 AppState: After adding - messages count: ${_messages.length}');
   }
 
   Future<bool> connectToServer(ConnectionConfig connection) async {
@@ -132,8 +147,11 @@ class AppState extends ChangeNotifier {
   }
 
   void addMessage(ChatMessage message) {
+    print('💬 AppState: addMessage called with: ${message.content} (type: ${message.type})');
     _messages.add(message);
+    print('💬 AppState: Messages list now has ${_messages.length} items');
     notifyListeners();
+    print('💬 AppState: notifyListeners called');
   }
 
   Future<void> sendCommand(String command) async {

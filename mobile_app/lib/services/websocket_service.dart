@@ -1,21 +1,23 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import '../models/connection_config.dart';
 
 class WebSocketService {
   static final WebSocketService _instance = WebSocketService._internal();
   factory WebSocketService() => _instance;
-  WebSocketService._internal();
+  WebSocketService._internal() {
+    _messageController = StreamController<Map<String, dynamic>>.broadcast();
+  }
 
   WebSocketChannel? _channel;
-  StreamController<Map<String, dynamic>>? _messageController;
+  late StreamController<Map<String, dynamic>> _messageController;
   ConnectionConfig? _currentConnection;
   String? _authToken;
   bool _isConnected = false;
 
-  Stream<Map<String, dynamic>> get messageStream => 
-      _messageController?.stream ?? const Stream.empty();
+  Stream<Map<String, dynamic>> get messageStream => _messageController.stream;
   bool get isConnected => _isConnected;
   ConnectionConfig? get currentConnection => _currentConnection;
 
@@ -24,9 +26,18 @@ class WebSocketService {
       disconnect();
 
       // Create WebSocket connection
-      final wsUrl = config.serverUrl.replaceFirst('http', 'ws') + '/ws';
+      String wsUrl = config.serverUrl.replaceFirst('http', 'ws') + '/ws';
+      
+      // For web deployment, use the current host's IP with WebSocket port
+      if (kIsWeb && wsUrl.contains('localhost')) {
+        final currentHost = Uri.base.host;
+        wsUrl = 'ws://$currentHost:64008/ws';
+      }
+      
+      print('🔗 WebSocketService: Connecting to $wsUrl');
       _channel = WebSocketChannel.connect(Uri.parse(wsUrl));
-      _messageController = StreamController<Map<String, dynamic>>.broadcast();
+      
+      // Message controller is already created in constructor
 
       // Listen to incoming messages
       _channel!.stream.listen(
@@ -73,7 +84,7 @@ class WebSocketService {
     late StreamSubscription subscription;
 
     // Listen for auth response
-    subscription = _messageController!.stream.listen((message) {
+    subscription = _messageController.stream.listen((message) {
       print('Auth response received: $message'); // Debug log
       
       if (message['type'] == 'auth-success') {
@@ -119,13 +130,13 @@ class WebSocketService {
     print('🔄 WebSocketService: Forwarding message to AppState: $message');
     
     // Forward to listeners
-    _messageController?.add(message);
+    _messageController.add(message);
     
     print('✅ WebSocketService: Message forwarded successfully');
   }
 
   void _handleConnectionError(dynamic error) {
-    _messageController?.add({
+    _messageController.add({
       'type': 'error',
       'message': 'Connection error: $error',
       'timestamp': DateTime.now().toIso8601String(),
@@ -135,7 +146,7 @@ class WebSocketService {
   void _handleDisconnection() {
     _isConnected = false;
     _currentConnection = _currentConnection?.copyWith(isConnected: false);
-    _messageController?.add({
+    _messageController.add({
       'type': 'system',
       'message': 'Disconnected from server',
       'timestamp': DateTime.now().toIso8601String(),
@@ -189,10 +200,9 @@ class WebSocketService {
 
   void disconnect() {
     _channel?.sink.close();
-    _messageController?.close();
+    // Don't close the message controller to keep the stream alive for reconnections
     
     _channel = null;
-    _messageController = null;
     _authToken = null;
     _isConnected = false;
     _currentConnection = _currentConnection?.copyWith(isConnected: false);
